@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <form id="ingestForm" method="POST" action="{{ url_for('ingest_m3u_url') }}" novalidate>
+      {{ form.csrf_token }} {# CSRF token #}
+      <div class="mb-3">
+          {{ form.m3u_url.label(class="form-label") }}
+          {{ form.m3u_url(class="form-control" + (" is-invalid" if form.m3u_url.errors else ""), placeholder="http://example.com/playlist.m3u") }}
+          {% for error in form.m3u_url.errors %}
+            <div class="invalid-feedback">{{ error }}</div>
+          {% endfor %}
+      </div>
+      <div>
+          {# Submit Button and Loading Spinner #}
+          <button type="submit" id="submitBtn" class="btn btn-primary">
+             {{ form.submit.label.text }}
+          </button>
+          <div id="loadingSpinner" class="spinner-border text-primary ms-2" role="status" style="display: none;">
+            <span class="visually-hidden">Loading...</span>
+          </div>
+      </div>
+  </form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Show spinner on form submission
+  const ingestForm = document.getElementById('ingestForm');
+  const submitButton = document.getElementById('submitBtn');
+  const loadingSpinner = document.getElementById('loadingSpinner');
+
+  if (ingestForm && submitButton && loadingSpinner) {
+    ingestForm.addEventListener('submit', function(event) {
+      // Basic check if WTForms validation might pass client-side (not foolproof)
+      if (!ingestForm.checkValidity()) {
+           // If browser validation fails, don't show spinner yet
+           return;
+      }
+       // Prevent double-click and show spinner
+      submitButton.disabled = true;
+      loadingSpinner.style.display = 'inline-block';
+      submitButton.innerHTML = 'Ingesting...'; // Optional: Change button text
+    });
+  }
+</script>
+{% endblock %}

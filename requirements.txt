@@ -1,0 +1,6 @@
+Flask
+Flask-WTF
+requests
+APScheduler
+SQLAlchemy
+Flask-SQLAlchemy # <-- Added this line

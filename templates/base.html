@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdn.datatables.net/2.0.5/css/dataTables.bootstrap5.css">
+    <style>
+        /* Custom styles if needed */
+        body { padding-top: 5rem; } /* Adjust padding for fixed navbar */
+        .form-error { color: red; font-size: 0.875em; }
+        #loadingSpinner { vertical-align: middle; }
+        /* Align DataTables search box to the right */
+        div.dataTables_wrapper div.dataTables_filter { text-align: right; }
+         /* Ensure table actions don't wrap excessively */
+        td form { margin-bottom: 0; }
+        td .btn { white-space: nowrap; }
+
+    </style>
+    <title>{{ title }} - M3U Manager</title>
+  </head>
+  <body>
+
+    <nav class="navbar navbar-expand-md navbar-dark bg-dark fixed-top">
+      <div class="container-fluid">
+        {# Brand/Home link - Pointing to Manage Sources as default #}
+        <a class="navbar-brand" href="{{ url_for('manage_sources') }}">M3U Manager</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarCollapse">
+          <ul class="navbar-nav me-auto mb-2 mb-md-0">
+            {# Link to generate the playlist file #}
+            <li class="nav-item">
+              <a class="nav-link {% if request.endpoint == 'get_m3u_playlist' %}active{% endif %}" href="{{ url_for('get_m3u_playlist') }}">Get Playlist</a>
+            </li>
+            {# Link to manually add a single channel/URL #}
+            <li class="nav-item">
+              <a class="nav-link {% if request.endpoint == 'add_channel_manual' %}active{% endif %}" href="{{ url_for('add_channel_manual') }}">Add Channel</a>
+            </li>
+             {# Link to the page for adding new M3U source URLs #}
+            <li class="nav-item">
+              <a class="nav-link {% if request.endpoint == 'add_source' %}active{% endif %}" href="{{ url_for('add_source') }}">Add Source</a>
+            </li>
+             {# Link to manage the list of source URLs #}
+            <li class="nav-item">
+                <a class="nav-link {% if request.endpoint == 'manage_sources' %}active{% endif %}" href="{{ url_for('manage_sources') }}">Manage Sources</a>
+            </li>
+            {# Link to manage individual channels (enable/disable) via DataTables page #}
+            <li class="nav-item">
+              <a class="nav-link {% if request.endpoint == 'manage_channels' %}active{% endif %}" href="{{ url_for('manage_channels') }}">Manage Channels</a>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </nav>
+    <main class="container mt-4">
+        {# Display the title passed from the Flask route #}
+        <h1 class="mb-4">{{ title }}</h1>
+
+        {# Flash Messages Section - displays messages flashed in Flask routes #}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              {# Map flash category to Bootstrap alert class #}
+              {% set alert_class = 'alert-info' %} {# Default #}
+              {% if category == 'danger' %} {% set alert_class = 'alert-danger' %}
+              {% elif category == 'success' %} {% set alert_class = 'alert-success' %}
+              {% elif category == 'warning' %} {% set alert_class = 'alert-warning' %}
+              {% endif %}
+              {# Render the alert message #}
+              <div class="alert {{ alert_class }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+              </div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+        {# End Flash Messages Section #}
+
+        {# Main Content Block - child templates will insert their content here #}
+        {% block content %}{% endblock %}
+    </main>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+    <script src="https://cdn.datatables.net/2.0.5/js/dataTables.js"></script>
+    <script src="https://cdn.datatables.net/2.0.5/js/dataTables.bootstrap5.js"></script>
+
+    {# Custom Page-Specific JavaScript Block - child templates can add scripts here #}
+    {% block scripts %}{% endblock %}
+  </body>
+</html>
