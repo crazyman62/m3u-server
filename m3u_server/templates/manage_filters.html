@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+  <div class="col-lg-8">
+    <h3>Existing Disable Filters</h3>
+    {% if filters %}
+      <table class="table table-striped table-hover">
+        <thead class="table-light">
+          <tr>
+            <th>Pattern (Case-Insensitive Regex)</th>
+            <th>Description</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in filters %}
+          <tr>
+            <td><code>{{ f.pattern }}</code></td>
+            <td>{{ f.description or '' }}</td>
+            <td>
+              <span class="badge {{ 'bg-success' if f.enabled else 'bg-secondary' }}">
+                {{ "Enabled" if f.enabled else "Disabled" }}
+              </span>
+            </td>
+            <td>
+              <form method="POST" action="{{ url_for('filters.toggle_filter', filter_id=f.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn btn-outline-secondary btn-sm">{{ "Disable" if f.enabled else "Enable" }}</button>
+              </form>
+              <form method="POST" action="{{ url_for('filters.delete_filter', filter_id=f.id) }}" class="d-inline" onsubmit="return confirm('Are you sure?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="alert alert-info">No channel filters have been added yet.</p>
+    {% endif %}
+
+    <!-- NEW SECTION -->
+    <h3 class="mt-5">Automated Channel Management</h3>
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Disable Channels Without EPG</h5>
+        <p class="card-text">
+          This will immediately run the task to disable any channels that currently have no EPG data.
+          The setting to run this automatically once a day is in <code>config.py</code>.
+        </p>
+        <form method="POST" action="{{ url_for('filters.apply_no_epg_disable') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+          <button type="submit" class="btn btn-warning">Run Now</button>
+        </form>
+      </div>
+    </div>
+    <!-- END NEW SECTION -->
+
+  </div>
+  <div class="col-lg-4">
+    <h3>Add New Filter</h3>
+    <form method="POST" action="{{ url_for('filters.manage_filters') }}" novalidate>
+      {{ form.csrf_token }}
+      <div class="mb-3">
+        {{ form.pattern.label(class="form-label") }}
+        {{ form.pattern(class="form-control" + (" is-invalid" if form.pattern.errors else ""), placeholder="e.g., ^US:|^UK:") }}
+        {% for error in form.pattern.errors %} <div class="invalid-feedback">{{ error }}</div> {% endfor %}
+      </div>
+      <div class="mb-3">
+        {{ form.description.label(class="form-label") }}
+        {{ form.description(class="form-control", placeholder="e.g., Block US and UK channels") }}
+      </div>
+      <div class="form-check mb-3">
+        {{ form.enabled(class="form-check-input") }}
+        {{ form.enabled.label(class="form-check-label") }}
+      </div>
+      {{ form.submit(class="btn btn-primary") }}
+    </form>
+  </div>
+</div>
+{% endblock %}

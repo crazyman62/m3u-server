@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block content %}
+  {# Determine the correct action URL based on the form object passed in #}
+  {% set action_url = url_for('sources.add_source') if form.m3u_url else url_for('epg.add_epg_source') %}
+
+  <form id="sourceForm" method="POST" action="{{ action_url }}" novalidate>
+      {{ form.csrf_token }}
+      <div class="mb-3">
+          {# Check which form field exists and render it accordingly #}
+          {% if form.m3u_url %}
+            {{ form.m3u_url.label(class="form-label") }}
+            {{ form.m3u_url(class="form-control" + (" is-invalid" if form.m3u_url.errors else ""), placeholder="http://example.com/playlist.m3u") }}
+            {% for error in form.m3u_url.errors %}
+              <div class="invalid-feedback">{{ error }}</div>
+            {% endfor %}
+          {% elif form.epg_url %}
+            {{ form.epg_url.label(class="form-label") }}
+            {{ form.epg_url(class="form-control" + (" is-invalid" if form.epg_url.errors else ""), placeholder="http://example.com/epg.xml") }}
+            {% for error in form.epg_url.errors %}
+              <div class="invalid-feedback">{{ error }}</div>
+            {% endfor %}
+          {% endif %}
+      </div>
+      <div>
+          <button type="submit" id="submitBtn" class="btn btn-primary">
+             {{ form.submit.label.text }}
+          </button>
+      </div>
+  </form>
+{% endblock %}

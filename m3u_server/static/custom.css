@@ -1,0 +1,35 @@
+/* static/custom.css */
+
+body {
+    padding-top: 5rem;
+}
+
+/* DataTables column widths */
+.col-logo { width: 60px; }
+.col-name { width: 25%; }
+.col-epg { width: auto; } /* Let it take remaining space */
+.col-status { width: 100px; }
+.col-actions { width: 180px; text-align: center; }
+
+
+/* Channel logo styling in the table */
+.channel-logo {
+    max-width: 50px;
+    max-height: 50px;
+    object-fit: contain;
+    background-color: #f8f9fa; /* Light background for transparent logos */
+    border-radius: 4px;
+}
+
+/* Ensure long URLs in tables don't break layout */
+.url-cell {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Ensure buttons in table actions don't wrap */
+.dataTables_wrapper .btn {
+    white-space: nowrap;
+}

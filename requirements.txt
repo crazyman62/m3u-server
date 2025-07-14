@@ -1,6 +1,5 @@
 Flask
 Flask-WTF
+Flask-SQLAlchemy
 requests
 APScheduler
-SQLAlchemy
-Flask-SQLAlchemy # <-- Added this line

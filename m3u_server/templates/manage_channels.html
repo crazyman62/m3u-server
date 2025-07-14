@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="mb-3">
+    <a href="{{ url_for('channels.add_channel') }}" class="btn btn-primary">Add New Channel Manually</a>
+  </div>
+
+  <table id="channelsTable" class="table table-striped table-hover table-bordered" style="width:100%">
+      <thead class="table-light">
+          <tr>
+              <th class="col-logo">Logo</th>
+              <th class="col-name">Name</th>
+              <th class="col-epg">Current/Next EPG (2 hours)</th>
+              <th class="col-status">Status</th>
+              <th class="col-actions">Actions</th>
+          </tr>
+      </thead>
+      <tbody>
+          <!-- Populated by DataTables -->
+      </tbody>
+  </table>
+
+  <!-- Include the modal for editing channels -->
+  {% include 'edit_channel_modal.html' %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+    // --- Initialize DataTables ---
+    const table = $('#channelsTable').DataTable({
+        "processing": true,
+        "serverSide": true,
+        "ajax": {
+            "url": "{{ url_for('channels.get_channels_data') }}",
+            "type": "POST",
+            "error": function(jqXHR, textStatus, errorThrown) {
+                console.error("DataTables Error:", textStatus, errorThrown, jqXHR.responseText);
+                alert("Error loading channel data. Please check the browser console for details.");
+            }
+        },
+        "columns": [
+            { "data": "logo", "orderable": false, "searchable": false },
+            { "data": "name" },
+            { "data": "epg", "orderable": false, "searchable": false },
+            { "data": "status", "searchable": false },
+            { "data": "actions", "orderable": false, "searchable": false }
+        ],
+        "order": [
+            [ 3, 'desc' ], // Default sort: Status (Enabled first)
+            [ 1, 'asc' ]  // Then by Name
+        ],
+        "lengthMenu": [ [25, 50, 100, 200, 500, -1], ['25', '50', '100', '200', '500', 'All'] ],
+        "pageLength": 50,
+        "language": {
+            "processing": '<div class="spinner-border spinner-border-sm text-primary" role="status"><span class="visually-hidden">Loading...</span></div> Processing...'
+        }
+    });
+
+    // --- Edit Modal Logic ---
+    const editModal = new bootstrap.Modal(document.getElementById('editChannelModal'));
+    const editForm = $('#editChannelForm');
+
+    $('#channelsTable tbody').on('click', '.edit-btn', function () {
+        const button = $(this);
+        const channelId = button.data('id');
+        
+        // Populate form fields from data attributes
+        editForm.find('#channel_id').val(channelId);
+        editForm.find('#name').val(button.data('name'));
+        editForm.find('#category').val(button.data('category'));
+        editForm.find('#tvg_id').val(button.data('tvg-id'));
+        editForm.find('#tvg_logo').val(button.data('tvg-logo'));
+        editForm.find('#enabled').prop('checked', button.data('enabled') == 1);
+        
+        // Update form action URL
+        editForm.attr('action', `/channels/edit/${channelId}`);
+        
+        editModal.show();
+    });
+
+    // --- Toggle Enable/Disable Logic ---
+    $('#channelsTable tbody').on('click', '.toggle-btn', function (e) {
+        e.preventDefault();
+        const button = $(this);
+        const channelId = button.data('id');
+        const originalText = button.text();
+
+        button.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>');
+
+        $.ajax({
+            url: `/channels/toggle/${channelId}`,
+            type: 'POST',
+            headers: { 'X-CSRFToken': '{{ csrf_token() }}' },
+            success: function(response) {
+                if (response.status === 'success') {
+                    table.ajax.reload(null, false); // Reload table data without resetting page
+                } else {
+                    alert('An error occurred.');
+                    button.prop('disabled', false).text(originalText);
+                }
+            },
+            error: function() {
+                alert('A server error occurred.');
+                button.prop('disabled', false).text(originalText);
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

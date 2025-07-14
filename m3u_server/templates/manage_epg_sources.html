@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="mb-3">
+      <a href="{{ url_for('epg.add_epg_source') }}" class="btn btn-primary">Add New EPG Source</a>
+  </div>
+
+  {% if sources %}
+    <table class="table table-striped table-hover">
+      <thead class="table-light">
+        <tr>
+          <th>ID</th>
+          <th>Source URL</th>
+          <th>Status</th>
+          <th>Interval</th>
+          <th>Last Checked (UTC)</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for source in sources %}
+          <tr>
+            <td>{{ source.id }}</td>
+            <td class="url-cell" title="{{ source.url }}">{{ source.url }}</td>
+            <td>
+              <span class="badge {{ 'bg-success' if source.enabled else 'bg-secondary' }}">
+                {{ "Enabled" if source.enabled else "Disabled" }}
+              </span>
+            </td>
+            <td>
+                <form method="POST" action="{{ url_for('epg.update_epg_interval', source_id=source.id) }}" class="d-inline-flex align-items-center gap-2">
+                    {{ interval_form.csrf_token }}
+                    {{ interval_form.interval(class="form-select form-select-sm", style="width: auto;", onchange="this.form.submit()", default=source.refresh_interval_hours) }}
+               </form>
+            </td>
+            <td>{{ source.last_checked.strftime('%Y-%m-%d %H:%M:%S') if source.last_checked else 'Never' }}</td>
+            <td>
+              <form method="POST" action="{{ url_for('epg.force_refresh_epg_source', source_id=source.id) }}" class="d-inline">
+                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                 <button type="submit" class="btn btn-info btn-sm" title="Trigger an immediate refresh">Refresh Now</button>
+              </form>
+              <form method="POST" action="{{ url_for('epg.toggle_epg_source', source_id=source.id) }}" class="d-inline">
+                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                 <button type="submit" class="btn btn-outline-secondary btn-sm">{{ "Disable" if source.enabled else "Enable" }}</button>
+              </form>
+              <form method="POST" action="{{ url_for('epg.delete_epg_source', source_id=source.id) }}" class="d-inline" onsubmit="return confirm('Are you sure?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="alert alert-info">No EPG source URLs have been added yet.</p>
+  {% endif %}
+{% endblock %}

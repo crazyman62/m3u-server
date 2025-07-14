@@ -1,0 +1,46 @@
+<!-- templates/edit_channel_modal.html -->
+<div class="modal fade" id="editChannelModal" tabindex="-1" aria-labelledby="editChannelModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="editChannelModalLabel">Edit Channel</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <!-- The form is populated by JavaScript -->
+        <form id="editChannelForm" method="POST" action="">
+          {{ edit_form.csrf_token }}
+          {{ edit_form.channel_id }}
+          
+          <div class="mb-3">
+            {{ edit_form.name.label(class="form-label") }}
+            {{ edit_form.name(class="form-control") }}
+          </div>
+          <div class="row">
+            <div class="col-md-6 mb-3">
+              {{ edit_form.category.label(class="form-label") }}
+              {{ edit_form.category(class="form-control") }}
+            </div>
+            <div class="col-md-6 mb-3">
+              {{ edit_form.tvg_id.label(class="form-label") }}
+              {{ edit_form.tvg_id(class="form-control") }}
+            </div>
+          </div>
+          <div class="mb-3">
+            {{ edit_form.tvg_logo.label(class="form-label") }}
+            {{ edit_form.tvg_logo(class="form-control") }}
+          </div>
+          <div class="form-check mb-3">
+            {{ edit_form.enabled(class="form-check-input") }}
+            {{ edit_form.enabled.label(class="form-check-label") }}
+          </div>
+          
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            {{ edit_form.submit(class="btn btn-primary") }}
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>

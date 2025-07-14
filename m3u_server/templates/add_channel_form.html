@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <form method="POST" action="{{ url_for('channels.add_channel') }}" novalidate>
+      {{ form.csrf_token }}
+
+      <div class="row">
+        <div class="col-md-8 mb-3">
+          {{ form.name.label(class="form-label") }}
+          {{ form.name(class="form-control" + (" is-invalid" if form.name.errors else "")) }}
+          {% for error in form.name.errors %} <div class="invalid-feedback">{{ error }}</div> {% endfor %}
+        </div>
+        <div class="col-md-4 mb-3">
+          {{ form.channel_num.label(class="form-label") }}
+          {{ form.channel_num(class="form-control" + (" is-invalid" if form.channel_num.errors else "")) }}
+          {% for error in form.channel_num.errors %} <div class="invalid-feedback">{{ error }}</div> {% endfor %}
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col-md-6 mb-3">
+          {{ form.category.label(class="form-label") }}
+          {{ form.category(class="form-control" + (" is-invalid" if form.category.errors else "")) }}
+          {% for error in form.category.errors %} <div class="invalid-feedback">{{ error }}</div> {% endfor %}
+        </div>
+        <div class="col-md-6 mb-3">
+          {{ form.tvg_id.label(class="form-label") }}
+          {{ form.tvg_id(class="form-control" + (" is-invalid" if form.tvg_id.errors else "")) }}
+          {% for error in form.tvg_id.errors %} <div class="invalid-feedback">{{ error }}</div> {% endfor %}
+        </div>
+      </div>
+      
+      <div class="mb-3">
+        {{ form.tvg_logo.label(class="form-label") }}
+        {{ form.tvg_logo(class="form-control" + (" is-invalid" if form.tvg_logo.errors else ""), placeholder="http://example.com/logo.png") }}
+        {% for error in form.tvg_logo.errors %} <div class="invalid-feedback">{{ error }}</div> {% endfor %}
+      </div>
+
+      <div class="mb-3">
+          {{ form.url.label(class="form-label") }}
+          {{ form.url(class="form-control" + (" is-invalid" if form.url.errors else ""), placeholder="http://server/stream.ts") }}
+           {% for error in form.url.errors %} <div class="invalid-feedback">{{ error }}</div> {% endfor %}
+     </div>
+      <div>
+          {{ form.submit(class="btn btn-primary") }}
+      </div>
+  </form>
+{% endblock %}
