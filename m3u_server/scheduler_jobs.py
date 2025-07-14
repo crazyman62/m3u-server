@@ -5,6 +5,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from flask import current_app
 from sqlalchemy.orm import selectinload
+from sqlalchemy import or_
 
 # Import the app factory and extensions from the main package
 from . import db, scheduler, create_app
@@ -79,7 +80,84 @@ def schedule_epg_refresh_job(epg_id, epg_url, interval_hours):
         name=f'Refresh EPG {epg_id}', replace_existing=True
     )
 
-# --- Core Background Jobs ---
+# --- Core Logic and Jobs ---
+
+def _synchronize_channel_states_logic():
+    """
+    The master logic to synchronize the enabled state of all channels based on all active rules.
+    This function expects to be run within an active Flask application context.
+    A channel is ENABLED if and only if:
+    1. It does NOT match any active regex filter.
+    2. If the "no EPG" rule is active, it MUST have EPG data.
+    """
+    current_app.logger.info("[Sync-States] Starting logic to synchronize channel states with all active rules.")
+    
+    try:
+        # Rule 1: Get all active regex filters
+        active_regex_filters = Filter.query.filter_by(enabled=True).all()
+        compiled_filters = [re.compile(f.pattern, re.IGNORECASE) for f in active_regex_filters]
+        current_app.logger.info(f"[Sync-States] Found {len(compiled_filters)} active regex filters.")
+
+        # Rule 2: Check if the "no EPG" rule is active and get relevant data
+        no_epg_rule_active = current_app.config.get('DISABLE_CHANNELS_WITHOUT_EPG', False)
+        channels_with_epg = set()
+        if no_epg_rule_active:
+            channels_with_epg = {row[0] for row in db.session.query(EpgData.channel_tvg_id).distinct().all() if row[0]}
+            current_app.logger.info(f"[Sync-States] 'No EPG' rule is active. Found {len(channels_with_epg)} channels with EPG data.")
+
+        all_channels = Channel.query.all()
+        channels_to_disable = []
+        channels_to_enable = []
+        log_counter = 0
+        
+        for channel in all_channels:
+            # Check if channel should be blocked by a regex filter
+            is_blocked_by_regex = any(p.search(text) for p in compiled_filters for text in [channel.name, channel.category] if text)
+            
+            # Check if channel should be blocked by the "no EPG" rule
+            is_blocked_by_no_epg = False
+            if no_epg_rule_active:
+                # A channel is blocked if it has no tvg_id OR its tvg_id is not in the set of channels with EPG data.
+                if not channel.tvg_id or channel.tvg_id not in channels_with_epg:
+                    is_blocked_by_no_epg = True
+            
+            # Determine the final state
+            should_be_enabled = not is_blocked_by_regex and not is_blocked_by_no_epg
+
+            # For debugging, log the decision for the first few channels
+            if log_counter < 5:
+                current_app.logger.info(f"[Sync-Debug] Chan: '{channel.name}' (ID:{channel.id}, Enabled:{channel.enabled}) | RegexBlock:{is_blocked_by_regex}, NoEpgBlock:{is_blocked_by_no_epg} -> ShouldBeEnabled:{should_be_enabled}")
+                log_counter += 1
+
+            if channel.enabled != should_be_enabled:
+                if should_be_enabled:
+                    channels_to_enable.append(channel.id)
+                else:
+                    channels_to_disable.append(channel.id)
+        
+        if channels_to_disable:
+            current_app.logger.info(f"[Sync-States] Disabling {len(channels_to_disable)} channels.")
+            db.session.query(Channel).filter(Channel.id.in_(channels_to_disable)).update({'enabled': False}, synchronize_session=False)
+
+        if channels_to_enable:
+            current_app.logger.info(f"[Sync-States] Enabling {len(channels_to_enable)} channels.")
+            db.session.query(Channel).filter(Channel.id.in_(channels_to_enable)).update({'enabled': True}, synchronize_session=False)
+
+        if channels_to_disable or channels_to_enable:
+            db.session.commit()
+            current_app.logger.info(f"[Sync-States] Commit complete. Disabled: {len(channels_to_disable)}, Enabled: {len(channels_to_enable)}.")
+        else:
+            current_app.logger.info("[Sync-States] All channel states are already synchronized with all rules. No changes needed.")
+
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"[Sync-States] An error occurred: {e}", exc_info=True)
+
+def synchronize_channel_states():
+    """The main job function that creates an app context and runs the sync logic."""
+    app = create_app()
+    with app.app_context():
+        _synchronize_channel_states_logic()
 
 def refresh_single_m3u_source(source_id, source_url):
     """Fetches and processes a single M3U source URL efficiently."""
@@ -87,12 +165,6 @@ def refresh_single_m3u_source(source_id, source_url):
     with app.app_context():
         current_app.logger.info(f"[M3U-Refresh:{source_id}] Starting process for: {source_url}")
         start_time = datetime.now(timezone.utc)
-        
-        active_filters = Filter.query.filter_by(enabled=True).all()
-        compiled_filters = [re.compile(f.pattern, re.IGNORECASE) for f in active_filters]
-        
-        def should_disable_channel(channel_name):
-            return any(pattern.search(channel_name) for pattern in compiled_filters)
 
         try:
             headers = {'User-Agent': 'M3U-Server/1.0'}
@@ -108,7 +180,6 @@ def refresh_single_m3u_source(source_id, source_url):
             current_app.logger.warning(f"[M3U-Refresh:{source_id}] Invalid M3U header.")
             return
 
-        # --- New Parsing Logic ---
         parsed_channels = {}
         current_extinf_data = None
         for line in lines:
@@ -123,86 +194,88 @@ def refresh_single_m3u_source(source_id, source_url):
                     attrs = {k.lower().replace('-', '_'): v for k, v in attrs.items()}
                     attrs['display_name'] = display_name.strip()
                     current_extinf_data = attrs
+                else:
+                    current_extinf_data = None
                 continue
 
             if current_extinf_data and not line.startswith('#'):
                 stream_url = line
                 tvg_id = current_extinf_data.get('tvg_id')
+                channel_name = current_extinf_data.get('tvg_name') or current_extinf_data.get('display_name')
                 
-                # Use tvg_id as the primary key. If it's missing, we can't reliably track the channel.
-                if not tvg_id:
+                if not channel_name:
                     current_extinf_data = None
                     continue
+
+                channel_key = tvg_id if tvg_id else channel_name
                 
-                if tvg_id not in parsed_channels:
-                    parsed_channels[tvg_id] = {'attrs': current_extinf_data, 'urls': set()}
+                if channel_key not in parsed_channels:
+                    parsed_channels[channel_key] = {'attrs': current_extinf_data, 'urls': set()}
                 
-                parsed_channels[tvg_id]['urls'].add(stream_url)
+                parsed_channels[channel_key]['urls'].add(stream_url)
                 current_extinf_data = None
         
-        current_app.logger.info(f"[M3U-Refresh:{source_id}] Parsed {len(parsed_channels)} unique channels with tvg-id.")
+        current_app.logger.info(f"[M3U-Refresh:{source_id}] Parsed {len(parsed_channels)} unique channels.")
 
-        # --- New DB Update Logic ---
-        all_tvg_ids = list(parsed_channels.keys())
+        all_channel_keys = list(parsed_channels.keys())
         batch_size = 500
-        for i in range(0, len(all_tvg_ids), batch_size):
-            batch_ids = all_tvg_ids[i:i + batch_size]
-            existing_channels = db.session.query(Channel).filter(Channel.tvg_id.in_(batch_ids)).options(selectinload(Channel.urls)).all()
-            channel_map = {ch.tvg_id: ch for ch in existing_channels}
+        for i in range(0, len(all_channel_keys), batch_size):
+            batch_keys = all_channel_keys[i:i + batch_size]
+            
+            possible_matches = db.session.query(Channel).filter(
+                or_(Channel.tvg_id.in_(batch_keys), Channel.name.in_(batch_keys))
+            ).options(selectinload(Channel.urls)).all()
 
-            for tvg_id, m3u_item in parsed_channels.items():
-                if tvg_id not in batch_ids: continue
+            channels_by_tvg_id = {ch.tvg_id: ch for ch in possible_matches if ch.tvg_id}
+            channels_by_name = {ch.name: ch for ch in possible_matches}
+
+            for channel_key, m3u_item in parsed_channels.items():
+                if channel_key not in batch_keys: continue
 
                 attrs = m3u_item['attrs']
                 urls = m3u_item['urls']
                 
+                tvg_id = attrs.get('tvg_id')
                 channel_name = attrs.get('tvg_name') or attrs['display_name']
+                if not channel_name: continue
+
                 channel_num_str = attrs.get('tvg_chno')
                 channel_num = int(channel_num_str) if channel_num_str and channel_num_str.isdigit() else None
                 logo_url = attrs.get('tvg_logo')
                 category = attrs.get('group_title')
 
-                channel = channel_map.get(tvg_id)
-                
-                is_disabled_by_filter = should_disable_channel(channel_name)
+                channel = None
+                if tvg_id: channel = channels_by_tvg_id.get(tvg_id)
+                if not channel: channel = channels_by_name.get(channel_name)
 
                 if not channel:
-                    current_app.logger.info(f"Adding new channel '{channel_name}' (ID: {tvg_id}, Ch: {channel_num})")
                     channel = Channel(
                         tvg_id=tvg_id,
                         name=channel_name,
                         tvg_name=attrs.get('tvg_name', channel_name),
                         tvg_logo=logo_url,
                         category=category,
-                        channel_num=channel_num,
-                        enabled=not is_disabled_by_filter # Apply filter on creation
+                        channel_num=channel_num
                     )
                     db.session.add(channel)
-                    db.session.flush() # Needed to get the channel.id for new URLs
-                
-                # Update existing channel attributes
-                channel.name = channel_name
-                channel.tvg_logo = logo_url
-                channel.category = category
-                channel.channel_num = channel_num
-                channel.last_seen = start_time
-                
-                # Re-apply filter on every refresh
-                if is_disabled_by_filter:
-                    channel.enabled = False
+                    if tvg_id: channels_by_tvg_id[tvg_id] = channel
+                    channels_by_name[channel_name] = channel
+                    db.session.flush()
+                else:
+                    channel.name = channel_name
+                    if logo_url: channel.tvg_logo = logo_url
+                    if category: channel.category = category
+                    if channel_num is not None: channel.channel_num = channel_num
+                    if tvg_id and not channel.tvg_id: channel.tvg_id = tvg_id
 
-                # Update URLs
+                channel.last_seen = start_time
                 existing_urls = {u.url for u in channel.urls}
                 for url_str in urls:
                     if url_str not in existing_urls:
-                        new_url = Url(url=url_str, channel_id=channel.id, last_seen=start_time)
-                        db.session.add(new_url)
+                        db.session.add(Url(url=url_str, channel_id=channel.id, last_seen=start_time))
                     else:
-                        # Touch the last_seen timestamp for existing URLs
                         for u in channel.urls:
-                            if u.url == url_str:
-                                u.last_seen = start_time
-                                break
+                            if u.url == url_str: u.last_seen = start_time
             
             db.session.commit()
             
@@ -210,11 +283,13 @@ def refresh_single_m3u_source(source_id, source_url):
         if source:
             source.last_checked = start_time
             db.session.commit()
-        current_app.logger.info(f"[M3U-Refresh:{source_id}] Process finished.")
+
+        current_app.logger.info(f"[M3U-Refresh:{source_id}] Process finished. Now running channel state synchronization.")
+        _synchronize_channel_states_logic()
 
 
 def refresh_single_epg_source(epg_id, epg_url):
-    """Fetches and processes a single XMLTV EPG source efficiently using a diffing method."""
+    """Fetches and processes a single XMLTV EPG source, mapping EPG data and updating channel info."""
     app = create_app()
     with app.app_context():
         current_app.logger.info(f"[EPG-Refresh:{epg_id}] Starting process for: {epg_url}")
@@ -232,114 +307,85 @@ def refresh_single_epg_source(epg_id, epg_url):
         try:
             root = ET.fromstring(xml_content)
             
-            db_channels = Channel.query.all()
-            db_channels_by_id = {c.tvg_id.lower(): c for c in db_channels if c.tvg_id}
-            db_channels_by_num = {str(c.channel_num): c for c in db_channels if c.channel_num is not None}
-            db_channels_by_norm_name = {normalize_name(c.name): c for c in db_channels}
-
-            final_epg_id_map = {}
-            epg_xml_channels = root.findall('channel')
-
-            for epg_channel in epg_xml_channels:
-                original_epg_id = epg_channel.attrib.get('id')
-                display_name_elem = epg_channel.find('display-name')
-                epg_display_name = display_name_elem.text if display_name_elem is not None else ''
-                
-                if not original_epg_id: continue
-
-                if original_epg_id.lower() in db_channels_by_id:
-                    final_epg_id_map[original_epg_id] = db_channels_by_id[original_epg_id.lower()].tvg_id
-                    continue
-
-                if epg_display_name:
-                    match = re.match(r'^\s*(\d+)\s*', epg_display_name)
-                    if match:
-                        epg_channel_num = match.group(1)
-                        if epg_channel_num in db_channels_by_num:
-                            final_epg_id_map[original_epg_id] = db_channels_by_num[epg_channel_num].tvg_id
-                            continue
-                
-                if epg_display_name:
-                    norm_name = normalize_name(epg_display_name)
-                    if norm_name in db_channels_by_norm_name:
-                        final_epg_id_map[original_epg_id] = db_channels_by_norm_name[norm_name].tvg_id
-                        continue
+            all_db_channels = Channel.query.all()
+            db_channels_by_tvg_id = {c.tvg_id.lower(): c for c in all_db_channels if c.tvg_id}
+            db_channels_by_norm_name = {normalize_name(c.name): c for c in all_db_channels}
             
-            current_app.logger.info(f"[EPG-Refresh:{epg_id}] Successfully mapped {len(final_epg_id_map)} EPG channels to DB channels.")
+            epg_to_db_channel_map = {}
+            channels_to_update = []
 
-            mapped_db_tvg_ids = set(final_epg_id_map.values())
-            if not mapped_db_tvg_ids:
-                current_app.logger.warning(f"[EPG-Refresh:{epg_id}] No channels were mapped. Aborting EPG update.")
+            for epg_channel_node in root.findall('channel'):
+                epg_id_attr = epg_channel_node.attrib.get('id')
+                if not epg_id_attr: continue
+
+                display_name_node = epg_channel_node.find('display-name')
+                epg_display_name = display_name_node.text if display_name_node is not None else ''
+                
+                icon_node = epg_channel_node.find('icon')
+                epg_logo_url = icon_node.attrib.get('src') if icon_node is not None else None
+
+                matched_channel = db_channels_by_tvg_id.get(epg_id_attr.lower())
+                if not matched_channel and epg_display_name:
+                    matched_channel = db_channels_by_norm_name.get(normalize_name(epg_display_name))
+
+                if matched_channel:
+                    epg_to_db_channel_map[epg_id_attr] = matched_channel
+                    updated = False
+                    if not matched_channel.tvg_id:
+                        matched_channel.tvg_id = epg_id_attr
+                        updated = True
+                    if epg_logo_url and not matched_channel.tvg_logo:
+                        matched_channel.tvg_logo = epg_logo_url
+                        updated = True
+                    if updated:
+                        channels_to_update.append(matched_channel)
+
+            if channels_to_update:
+                db.session.commit()
+                current_app.logger.info(f"[EPG-Refresh:{epg_id}] Updated {len(channels_to_update)} channels with info from EPG.")
+
+            if not epg_to_db_channel_map:
+                current_app.logger.warning(f"[EPG-Refresh:{epg_id}] No channels were mapped. Aborting programme data update.")
                 return
 
-            existing_epg_data = EpgData.query.filter(EpgData.channel_tvg_id.in_(mapped_db_tvg_ids)).all()
-            existing_programs = {(d.channel_tvg_id, d.start_time, d.title): d for d in existing_epg_data}
-            
-            new_programs_from_xml = {}
-            
-            for prog in root.findall('programme'):
-                original_prog_channel_id = prog.attrib.get('channel')
-                db_tvg_id = final_epg_id_map.get(original_prog_channel_id)
-                if not db_tvg_id: continue
+            mapped_db_tvg_ids = {ch.tvg_id for ch in epg_to_db_channel_map.values() if ch.tvg_id}
+            db.session.query(EpgData).filter(EpgData.channel_tvg_id.in_(mapped_db_tvg_ids)).delete(synchronize_session=False)
 
-                start = parse_xmltv_datetime(prog.attrib.get('start'))
-                stop = parse_xmltv_datetime(prog.attrib.get('stop'))
+            new_programs = []
+            for prog_node in root.findall('programme'):
+                prog_channel_id = prog_node.attrib.get('channel')
+                db_channel = epg_to_db_channel_map.get(prog_channel_id)
+                if not db_channel or not db_channel.tvg_id: continue
+
+                start = parse_xmltv_datetime(prog_node.attrib.get('start'))
+                stop = parse_xmltv_datetime(prog_node.attrib.get('stop'))
                 if not start or not stop or stop < start_time: continue
 
-                title_elem = prog.find('title')
-                title = title_elem.text if title_elem is not None else 'No Title'
+                title = (prog_node.find('title').text if prog_node.find('title') is not None else 'No Title')
+                description = (prog_node.find('desc').text if prog_node.find('desc') is not None else None)
                 
-                program_key = (db_tvg_id, start, title)
-                
-                desc_elem = prog.find('desc')
-                description = desc_elem.text if desc_elem is not None else None
-                
-                new_programs_from_xml[program_key] = {
-                    'end_time': stop,
-                    'description': description
-                }
-
-            to_add, to_update = [], []
-            existing_keys, new_keys = set(existing_programs.keys()), set(new_programs_from_xml.keys())
-
-            for key in new_keys - existing_keys:
-                prog_data = new_programs_from_xml[key]
-                to_add.append(EpgData(
-                    channel_tvg_id=key[0], start_time=key[1], title=key[2],
-                    end_time=prog_data['end_time'], description=prog_data['description']
+                new_programs.append(EpgData(
+                    channel_tvg_id=db_channel.tvg_id, title=title,
+                    start_time=start, end_time=stop, description=description
                 ))
-
-            for key in new_keys.intersection(existing_keys):
-                existing_prog, new_prog_data = existing_programs[key], new_programs_from_xml[key]
-                if existing_prog.end_time != new_prog_data['end_time'] or existing_prog.description != new_prog_data['description']:
-                    existing_prog.end_time = new_prog_data['end_time']
-                    existing_prog.description = new_prog_data['description']
-                    to_update.append(existing_prog)
-
-            ids_to_delete = [existing_programs[key].id for key in existing_keys - new_keys]
-
-            if to_add:
-                db.session.add_all(to_add)
-                current_app.logger.info(f"[EPG-Refresh:{epg_id}] Adding {len(to_add)} new EPG entries.")
-            if to_update:
-                current_app.logger.info(f"[EPG-Refresh:{epg_id}] Updating {len(to_update)} existing EPG entries.")
-            if ids_to_delete:
-                db.session.query(EpgData).filter(EpgData.id.in_(ids_to_delete)).delete(synchronize_session=False)
-                current_app.logger.info(f"[EPG-Refresh:{epg_id}] Deleting {len(ids_to_delete)} stale EPG entries.")
-
-            db.session.commit()
+            
+            if new_programs:
+                db.session.bulk_save_objects(new_programs)
+                db.session.commit()
+                current_app.logger.info(f"[EPG-Refresh:{epg_id}] Ingested {len(new_programs)} new EPG entries.")
 
             epg_source = EpgSource.query.get(epg_id)
             if epg_source:
                 epg_source.last_checked = start_time
                 db.session.commit()
-            current_app.logger.info(f"[EPG-Refresh:{epg_id}] Process finished.")
+            
+            current_app.logger.info(f"[EPG-Refresh:{epg_id}] Process finished. Now running channel state synchronization.")
+            _synchronize_channel_states_logic()
 
-        except ET.ParseError as e:
-            current_app.logger.error(f"[EPG-Refresh:{epg_id}] XML parsing failed: {e}")
         except Exception as e:
             db.session.rollback()
             current_app.logger.error(f"[EPG-Refresh:{epg_id}] An unexpected error occurred: {e}", exc_info=True)
+
 
 def scheduled_cleanup_job():
     """Scheduled task to remove old channels, URLs, and EPG data."""
@@ -348,48 +394,23 @@ def scheduled_cleanup_job():
         current_app.logger.info("[Cleanup-Job] Starting daily cleanup...")
         
         channel_cutoff = datetime.now(timezone.utc) - timedelta(days=current_app.config.get('CHANNEL_DATA_RETENTION_DAYS', 3))
-        urls_deleted = Url.query.filter(Url.last_seen < channel_cutoff).delete()
+        Url.query.filter(Url.last_seen < channel_cutoff).delete()
         
         orphan_channels_query = db.session.query(Channel.id).outerjoin(Url).filter(Url.id == None, Channel.last_seen < channel_cutoff)
-        channels_deleted = Channel.query.filter(Channel.id.in_(orphan_channels_query)).delete(synchronize_session=False)
-        db.session.commit()
-        current_app.logger.info(f"[Cleanup-Job] Deleted {urls_deleted} old URLs and {channels_deleted} old/orphan channels.")
+        Channel.query.filter(Channel.id.in_(orphan_channels_query)).delete(synchronize_session=False)
         
         epg_cutoff = datetime.now(timezone.utc) - timedelta(hours=current_app.config.get('EPG_DATA_RETENTION_HOURS', 72))
-        epg_deleted = EpgData.query.filter(EpgData.end_time < epg_cutoff).delete()
-        db.session.commit()
-        current_app.logger.info(f"[Cleanup-Job] Deleted {epg_deleted} old EPG entries.")
+        EpgData.query.filter(EpgData.end_time < epg_cutoff).delete()
         
+        db.session.commit()
         current_app.logger.info("[Cleanup-Job] Finished.")
 
+# --- Wrapper jobs for UI buttons and scheduled tasks ---
+
+def apply_all_filters_job():
+    """Wrapper job that triggers the main synchronization task."""
+    synchronize_channel_states()
+
 def disable_channels_without_epg():
-    """Disables channels that do not have any EPG data if the feature is enabled."""
-    app = create_app()
-    with app.app_context():
-        if not current_app.config.get('DISABLE_CHANNELS_WITHOUT_EPG'):
-            current_app.logger.info("[Disable-No-EPG] Job skipped: feature is disabled in config.")
-            return
-
-        current_app.logger.info("[Disable-No-EPG] Starting job to disable channels without EPG data.")
-        
-        try:
-            subquery = db.session.query(EpgData.channel_tvg_id).distinct()
-            channels_with_epg = {row[0] for row in subquery.all()}
-
-            channels_to_disable = Channel.query.filter(
-                Channel.enabled == True,
-                Channel.tvg_id.isnot(None),
-                Channel.tvg_id.notin_(channels_with_epg)
-            )
-
-            disabled_count = channels_to_disable.update({'enabled': False}, synchronize_session=False)
-            db.session.commit()
-
-            if disabled_count > 0:
-                current_app.logger.info(f"[Disable-No-EPG] Successfully disabled {disabled_count} channels without EPG data.")
-            else:
-                current_app.logger.info("[Disable-No-EPG] No channels found to disable.")
-
-        except Exception as e:
-            db.session.rollback()
-            current_app.logger.error(f"[Disable-No-EPG] An error occurred: {e}", exc_info=True)
+    """Wrapper job that triggers the main synchronization task."""
+    synchronize_channel_states()

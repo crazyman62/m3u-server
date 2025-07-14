@@ -42,22 +42,45 @@
       <p class="alert alert-info">No channel filters have been added yet.</p>
     {% endif %}
 
-    <!-- NEW SECTION -->
+    <!-- Automated Channel Management Section -->
     <h3 class="mt-5">Automated Channel Management</h3>
-    <div class="card">
-      <div class="card-body">
-        <h5 class="card-title">Disable Channels Without EPG</h5>
-        <p class="card-text">
-          This will immediately run the task to disable any channels that currently have no EPG data.
-          The setting to run this automatically once a day is in <code>config.py</code>.
-        </p>
-        <form method="POST" action="{{ url_for('filters.apply_no_epg_disable') }}">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-          <button type="submit" class="btn btn-warning">Run Now</button>
-        </form>
+    <div class="row">
+      <!-- Card for Applying Name/Group Filters -->
+      <div class="col-md-6 mb-3">
+        <div class="card h-100">
+          <div class="card-body d-flex flex-column">
+            <h5 class="card-title">Apply All Name/Group Filters</h5>
+            <p class="card-text">
+              This will immediately run a task to disable any channels that match any of your currently <strong>enabled</strong> filters from the list above.
+            </p>
+            <div class="mt-auto">
+              <form method="POST" action="{{ url_for('filters.apply_all_filters') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn btn-primary">Run Filter Task Now</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Card for Disabling Channels without EPG -->
+      <div class="col-md-6 mb-3">
+        <div class="card h-100">
+          <div class="card-body d-flex flex-column">
+            <h5 class="card-title">Disable Channels Without EPG</h5>
+            <p class="card-text">
+              This will immediately run a task to disable any channels that currently have no EPG data. The daily automatic job can be configured in <code>config.py</code>.
+            </p>
+            <div class="mt-auto">
+              <form method="POST" action="{{ url_for('filters.apply_no_epg_disable') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn btn-warning">Run EPG Task Now</button>
+              </form>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-    <!-- END NEW SECTION -->
+    <!-- END Automated Channel Management Section -->
 
   </div>
   <div class="col-lg-4">
