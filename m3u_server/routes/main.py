@@ -1,5 +1,5 @@
 # m3u_server/routes/main.py
-from flask import Blueprint, redirect, url_for, render_template, abort, current_app, request
+from flask import Blueprint, redirect, url_for, render_template, abort, current_app, request, Response, stream_with_context
 from sqlalchemy.orm import joinedload
 from datetime import datetime, timezone
 from xml.sax.saxutils import escape
@@ -51,51 +51,57 @@ def get_m3u_playlist():
 
 @main_bp.route('/epg.xml')
 def get_epg_xml():
-    """Generates and serves the final EPG XMLTV file."""
-    try:
-        channels = Channel.query.filter(Channel.enabled == True, Channel.tvg_id != None).all()
-        epg_data = EpgData.query.filter(EpgData.end_time > datetime.now(timezone.utc)).order_by(EpgData.start_time).all()
+    """Generates and serves the final EPG XMLTV file via streaming."""
+    def generate():
+        yield '<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n'
 
-        epg_map = {}
-        for item in epg_data:
-            if item.channel_tvg_id not in epg_map:
-                epg_map[item.channel_tvg_id] = []
-            epg_map[item.channel_tvg_id].append(item)
+        # 1. Output Channels
+        channels_query = Channel.query.filter(Channel.enabled == True, Channel.tvg_id != None)
 
-        xml_lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv>']
+        # We also need to get the set of valid tvg_ids to filter the EPG data.
+        # Since we are streaming, we can't efficiently iterate the channel list twice without querying twice
+        # or storing in memory. The list of channels is usually small enough to store IDs in memory.
+        # But for robustness, we use a subquery for the EPG data filtering as planned.
 
-        for channel in channels:
-            channel_id_esc = escape(channel.tvg_id)
-            display_name_esc = escape(channel.name)
+        for channel in channels_query:
+             channel_id_esc = escape(channel.tvg_id)
+             display_name_esc = escape(channel.name)
+
+             yield f'  <channel id="{channel_id_esc}">\n'
+             yield f'    <display-name>{display_name_esc}</display-name>\n'
+             if channel.tvg_logo:
+                 icon_src_esc = escape(channel.tvg_logo)
+                 yield f'    <icon src="{icon_src_esc}" />\n'
+             yield '  </channel>\n'
+
+        # 2. Output Programmes
+        # Optimization: Query only EPG data for the enabled channels using a subquery
+        valid_tvg_ids_subquery = db.session.query(Channel.tvg_id).filter(
+             Channel.enabled == True,
+             Channel.tvg_id != None
+        )
+
+        epg_query = EpgData.query.filter(
+            EpgData.channel_tvg_id.in_(valid_tvg_ids_subquery),
+            EpgData.end_time > datetime.now(timezone.utc)
+        ).order_by(EpgData.start_time)
+
+        # Use yield_per to fetch in chunks to avoid memory overload
+        for prog in epg_query.yield_per(500):
+            channel_id_esc = escape(prog.channel_tvg_id)
+            title_esc = escape(prog.title)
             
-            xml_lines.append(f'  <channel id="{channel_id_esc}">')
-            xml_lines.append(f'    <display-name>{display_name_esc}</display-name>')
-            if channel.tvg_logo:
-                icon_src_esc = escape(channel.tvg_logo)
-                xml_lines.append(f'    <icon src="{icon_src_esc}" />')
-            xml_lines.append('  </channel>')
+            # Helper to format time
+            start_str = prog.start_time.strftime('%Y%m%d%H%M%S %z')
+            end_str = prog.end_time.strftime('%Y%m%d%H%M%S %z')
 
-        for channel in channels:
-            if channel.tvg_id in epg_map:
-                for prog in epg_map[channel.tvg_id]:
-                    channel_id_esc = escape(prog.channel_tvg_id)
-                    title_esc = escape(prog.title)
-                    
-                    start_str = prog.start_time.strftime('%Y%m%d%H%M%S %z')
-                    end_str = prog.end_time.strftime('%Y%m%d%H%M%S %z')
-                    
-                    xml_lines.append(f'  <programme start="{start_str}" stop="{end_str}" channel="{channel_id_esc}">')
-                    xml_lines.append(f'    <title lang="en">{title_esc}</title>')
-                    if prog.description:
-                        desc_esc = escape(prog.description)
-                        xml_lines.append(f'    <desc lang="en">{desc_esc}</desc>')
-                    xml_lines.append('  </programme>')
-
-        xml_lines.append('</tv>')
+            yield f'  <programme start="{start_str}" stop="{end_str}" channel="{channel_id_esc}">\n'
+            yield f'    <title lang="en">{title_esc}</title>\n'
+            if prog.description:
+                desc_esc = escape(prog.description)
+                yield f'    <desc lang="en">{desc_esc}</desc>\n'
+            yield '  </programme>\n'
         
-        xml_content = "\n".join(xml_lines)
-        return xml_content.encode('utf-8'), 200, {'Content-Type': 'application/xml; charset=utf-8'}
+        yield '</tv>'
 
-    except Exception as e:
-        current_app.logger.error(f"Error generating EPG XML: {e}", exc_info=True)
-        abort(500, "Error generating EPG XML.")
+    return Response(stream_with_context(generate()), mimetype='application/xml')
