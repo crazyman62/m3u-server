@@ -1,7 +1,20 @@
 /* static/custom.css */
 
+:root {
+    --main-bg-gradient: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
+    --logo-bg-color: #f8f9fa;
+}
+
+[data-bs-theme="dark"] {
+    --main-bg-gradient: linear-gradient(135deg, #232526 0%, #414345 100%);
+    --logo-bg-color: #ced4da; /* Slightly lighter than dark bg for visibility */
+}
+
 body {
     padding-top: 5rem;
+    background: var(--main-bg-gradient);
+    background-attachment: fixed; /* Keep gradient fixed when scrolling */
+    min-height: 100vh;
 }
 
 /* DataTables column widths */
@@ -17,7 +30,7 @@ body {
     max-width: 50px;
     max-height: 50px;
     object-fit: contain;
-    background-color: #f8f9fa; /* Light background for transparent logos */
+    background-color: var(--logo-bg-color);
     border-radius: 4px;
 }
 
