@@ -11,9 +11,19 @@ class Config:
     
     # --- Database Configuration ---
     DATABASE_FILENAME = 'data.db'
-    INSTANCE_PATH = os.path.join(basedir, 'instance')
+
+    # Allow overriding the instance path via DATA_DIR environment variable
+    # This is useful for Docker setups where the user wants to mount a specific
+    # directory for persistence (e.g., /config or /data).
+    INSTANCE_PATH = os.environ.get('DATA_DIR', os.path.join(basedir, 'instance'))
+
     DATABASE_PATH = os.path.join(INSTANCE_PATH, DATABASE_FILENAME)
-    Path(INSTANCE_PATH).mkdir(exist_ok=True)
+
+    # Ensure the instance directory exists
+    try:
+        Path(INSTANCE_PATH).mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"Warning: Could not create instance directory at {INSTANCE_PATH}: {e}")
 
     SQLALCHEMY_DATABASE_URI = f"sqlite:///{DATABASE_PATH}"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
