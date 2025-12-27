@@ -1,0 +1,15 @@
+services:
+  m3u-manager:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      # Mount a local 'data' directory to the instance folder in the container.
+      # This ensures the database (data.db) is persisted on the host machine.
+      - ./data:/app/m3u_server/instance
+    environment:
+      # Set the Flask secret key. Change this to a random string for production security.
+      - FLASK_SECRET_KEY=change-me-to-something-secure
+      # Ensure Gunicorn logs show up in docker logs
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
